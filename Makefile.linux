@@ -5,7 +5,49 @@ DOPTS = -DNDEBUG=1 -O3
 # for debugging
 #DOPTS=-g
 
+#ADDMAINUSER=/usr/sbin/adduser --quiet --system --group
+#ADDUSER=/usr/sbin/adduser --quiet --system --ingroup radio
+ADDMAINUSER=/usr/sbin/useradd --system
+ADDUSER=/usr/sbin/useradd --system --groups radio
+
 COPTS=-march=native -std=gnu11 -pthread -Wall -funsafe-math-optimizations -D_GNU_SOURCE=1
+
+# Airspy
+###AIRSPY_DAEMONS=airspyd airspyhfd
+###AIRSPY_SYSTEMD_FILES=airspyd@.service airspyhfd@.service
+###AIRSPY_UDEV_FILES=52-airspy.rules 52-airspyhf.rules
+###AIRSPY_CONF_FILES=airspyd.conf
+###AIRSPY_SRC=airspyd.c airspyhfd.c
+###AIRSPY_ADDUSER=$(ADDUSER) airspy
+###AIRSPY_CONF_DIR=/etc/radio/airspyd.conf.d
+###AIRSPY_INSTALL_CONF_FILES=true
+AIRSPY_INSTALL_CONF_FILES=false
+
+# FUNcube
+###FUNCUBE_DAEMONS=funcubed
+###FUNCUBE_SYSTEMD_FILES=funcubed@.service
+###FUNCUBE_UDEV_FILES=68-funcube-dongle-proplus.rules 68-funcube-dongle.rules
+###FUNCUBE_CONF_FILES=funcubed-0.conf
+###FUNCUBE_SRC=fcd.c funcubed.c
+###FUNCUBE_SRC_H=fcd.h fcdhidcmd.h
+###FUNCUBE_ADDUSER=$(ADDUSER) funcube
+
+# HackRF
+###HACKRF_SYSTEMD_FILES=hackrf@.service
+###HACKRF_UDEV_FILES=66-hackrf.rules
+
+# RTL-SDR
+###RTLSDR_DAEMONS=rtlsdr
+###RTLSDR_UDEV_FILES=20-rtlsdr.rules
+###RTLSDR_SRC=rtlsdr.c
+
+# SDRplay
+SDRPLAY_DAEMONS=sdrplayd
+SDRPLAY_SYSTEMD_FILES=sdrplayd@.service
+SDRPLAY_CONF_FILES=sdrplayd.conf
+SDRPLAY_SRC=sdrplayd.c
+SDRPLAY_ADDUSER=$(ADDUSER) sdrplay
+
 
 # Get local versions (e.g., of librtlsdr)
 LDOPTS=-L/usr/local/lib
@@ -18,54 +60,55 @@ DAEMONDIR=/usr/local/sbin
 VARDIR=/var/lib/ka9q-radio
 LDLIBS=-lpthread -lbsd -lm
 
-DAEMONS=aprs aprsfeed funcubed opusd packetd radiod airspyd airspyhfd stereod rdsd rtlsdr
+DAEMONS=aprs aprsfeed $(FUNCUBE_DAEMONS) opusd packetd radiod $(AIRSPY_DAEMONS) stereod rdsd $(RTLSDR_DAEMONS) $(SDRPLAY_DAEMONS)
 
 EXECS=iqplay iqrecord modulate monitor opussend pcmsend pcmcat pcmrecord pcmspawn control metadump pl show-pkt show-sig tune wspr-decoded setfilt
 
 AFILES=bandplan.txt help.txt modes.conf id.txt
 
-SYSTEMD_FILES=airspyd@.service airspyhfd@.service funcubed@.service hackrf@.service packetd.service radiod@.service aprsfeed.service opusd@.service recordings@.service stereod.service rdsd.service wspr-decoded.service horusdemod.service
+SYSTEMD_FILES=$(AIRSPY_SYSTEMD_FILES) $(FUNCUBE_SYSTEMD_FILES) $(HACKRF_SYSTEMD_FILES) packetd.service radiod@.service aprsfeed.service opusd@.service recordings@.service stereod.service rdsd.service wspr-decoded.service horusdemod.service $(SDRPLAY_SYSTEMD_FILES)
 
-UDEV_FILES=20-rtlsdr.rules 52-airspy.rules 52-airspyhf.rules 66-hackrf.rules 68-funcube-dongle-proplus.rules 68-funcube-dongle.rules
+UDEV_FILES=$(RTLSDR_UDEV_FILES) $(AIRSPY_UDEV_FILES) $(HACKRF_UDEV_FILES) $(FUNCUBE_UDEV_FILES)
 
-CONF_FILES=funcubed-0.conf \
-			 opusd@hf.conf opusd@hfdl.conf opusd@6m.conf opusd@2m.conf opusd@125cm.conf opusd@70cm.conf opusd@aviation.conf opusd@packet.conf opusd@kpbs.conf opusd@ksds.conf \
+CONF_FILES=$(FUNCUBE_CONF_FILES) \
+			 opusd@hf.conf opusd@hfdl.conf opusd@6m.conf opusd@2m.conf opusd@125cm.conf opusd@70cm.conf opusd@aviation.conf opusd@packet.conf opusd@wjct.conf opusd@wjkv.conf \
 			 stereod.conf rdsd.conf \
 			 radiod@10m.conf radiod@6m.conf radiod@fm.conf radiod@2m.conf radiod@125cm.conf radiod@70cm.conf radiod@hf.conf radiod@aviation.conf radiod@horus.conf radiod@nws.conf radiod@sonde.conf \
 			 recordings@hf.conf recordings@6m.conf recordings@2m.conf recordings@125cm.conf recordings@70cm.conf recordings@aviation.conf recordings@pictures.conf \
-			 wspr-decoded.conf horus.conf airspyd.conf packetd.conf aprs.conf
+			 wspr-decoded.conf horus.conf $(AIRSPY_CONF_FILES) packetd.conf aprs.conf \
+			 $(SDRPLAY_CONF_FILES)
 
 AIRSPY_FILES=
 
 BLACKLIST=airspy-blacklist.conf
 
-SRC=airspyd.c airspyhfd.c aprs.c aprsfeed.c attr.c audio.c avahi.c ax25.c bandplan.c config.c control.c decimate.c decode_status.c dump.c fcd.c filter.c fm.c \
-	   tune.c funcubed.c iir.c iqplay.c iqrecord.c linear.c main.c metadump.c misc.c modes.c modulate.c monitor.c radio.c setfilt.c \
-	   show-sig.c radio_status.c multicast.c opusd.c pcmcat.c pcmsend.c osc.c packetd.c hid-libusb.c opussend.c show-pkt.c pcmrecord.c pl.c rdsd.c rtcp.c rtlsdr.c pcmspawn.c \
-	   status.c stereod.c wfm.c wspr-decoded.c attr.h ax25.h bandplan.h conf.h config.h decimate.h \
-	   fcd.h fcdhidcmd.h filter.h hidapi.h iir.h misc.h  multicast.h osc.h radio.h status.h
+SRC=$(AIRSPY_SRC) aprs.c aprsfeed.c attr.c audio.c avahi.c ax25.c bandplan.c config.c control.c decimate.c decode_status.c dump.c $(FUNCUBE_SRC) filter.c fm.c \
+	   tune.c iir.c iqplay.c iqrecord.c linear.c main.c metadump.c misc.c modes.c modulate.c monitor.c radio.c setfilt.c \
+	   show-sig.c radio_status.c multicast.c opusd.c pcmcat.c pcmsend.c osc.c packetd.c hid-libusb.c opussend.c show-pkt.c pcmrecord.c pl.c rdsd.c rtcp.c $(RTLSDR_SRC) pcmspawn.c \
+	   status.c stereod.c wfm.c wspr-decoded.c $(SDRPLAY_SRC) attr.h ax25.h bandplan.h conf.h config.h decimate.h \
+	   $(FUNCUBE_SRC_H) filter.h hidapi.h iir.h misc.h  multicast.h osc.h radio.h status.h
 
 all: depend $(DAEMONS) $(EXECS) $(AFILES) $(SYSTEMD_FILES) $(UDEV_FILES) $(CONF_FILES) $(AIRSPY_FILES) $(BLACKLIST) 98-sockbuf.conf start-ka9q-horus.sh
 
-# Don't overwrite existing config files in /etc/radio
 install: $(DAEMONS) $(EXECS) $(AFILES) $(SYSTEMD_FILES) $(UDEV_FILES) $(CONF_FILES) $(AIRSPY_FILES) $(BLACKLIST) 98-sockbuf.conf start-ka9q-horus.sh
-	/usr/sbin/adduser --quiet --system --group radio
-	/usr/sbin/adduser --quiet --system --ingroup radio airspy
-	/usr/sbin/adduser --quiet --system --ingroup radio funcube
-	/usr/sbin/adduser --quiet --system --ingroup radio recordings
-	/usr/sbin/adduser --quiet --system --ingroup radio aprsfeed
+	#$(ADDMAINUSER) radio
+	#$(AIRSPY_ADDUSER)
+	#$(FUNCUBE_ADDUSER)
+	#$(SDRPLAY_ADDUSER)
+	#$(ADDUSER) recordings
+	#$(ADDUSER) aprsfeed
 	install -o root -m 0755 -D --target-directory=/etc/sysctl.d 98-sockbuf.conf
 	install -o root -m 0755 -D --target-directory=$(DAEMONDIR) $(DAEMONS) start-ka9q-horus.sh
 	install -o root -m 0755 -D --target-directory=$(BINDIR) $(EXECS)
 	install -o root -m 0644 -D --target-directory=$(LIBDIR) $(AFILES)
 	install -o root -m 0644 -D --target-directory=/etc/systemd/system $(SYSTEMD_FILES)
-	install -o root -m 0644 -D --target-directory=/etc/udev/rules.d $(UDEV_FILES)
-	install -o root -m 0644 -D --target-directory=/etc/modprobe.d $(BLACKLIST)
-	mkdir -p /etc/fftw /etc/radio $(VARDIR) /etc/radio/airspyd.conf.d
+	#install -o root -m 0644 -D --target-directory=/etc/udev/rules.d $(UDEV_FILES)
+	#install -o root -m 0644 -D --target-directory=/etc/modprobe.d $(BLACKLIST)
+	mkdir -p /etc/fftw /etc/radio $(VARDIR) $(AIRSPY_CONF_DIR)
 	chgrp radio $(VARDIR) /etc/radio /etc/fftw
 	chmod g+ws $(VARDIR) /etc/radio /etc/fftw
 	cp -n -v --target-directory=/etc/radio $(CONF_FILES)
-#	cp -n -v --target-directory=/etc/radio/airspyd.conf.d $(AIRSPY_FILES)
+#	$(AIRSPY_INSTALL_CONF_FILES) && cp -n -v --target-directory=$(AIRSPY_CONF_DIR) $(AIRSPY_FILES)
 	systemctl daemon-reload
 
 clean:
@@ -163,6 +206,9 @@ radiod: main.o audio.o fm.o wfm.o linear.o radio.o rtcp.o radio_status.o modes.o
 
 rdsd: rdsd.o libradio.a
 	$(CC) $(LDOPTS) -o $@ $^ -lavahi-client -lavahi-common -lfftw3f_threads -lfftw3f -lbsd -lm -lpthread
+
+sdrplayd: sdrplayd.o libradio.a
+	$(CC) $(LDOPTS) -o $@ $^ -lsdrplay_api -lavahi-client -lavahi-common -lbsd -liniparser -lm -lpthread
 
 stereod: stereod.o libradio.a
 	$(CC) $(LDOPTS) -o $@ $^ -lavahi-client -lavahi-common -lfftw3f_threads -lfftw3f -lbsd -lm -lpthread
