@@ -476,6 +476,8 @@ static int loadconfig(char const * const file){
 	    }
 	  }
 	}
+	// initialize oscillator
+	set_osc(&demod->fine,demod->filter.remainder/demod->output.samprate,demod->tune.doppler_rate/(demod->output.samprate * demod->output.samprate));
 	// Initialization all done, start it up
 	set_freq(demod,demod->tune.freq);
 	if(demod->tune.freq != 0){ // Don't start dynamic entry
