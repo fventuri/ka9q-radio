@@ -7,7 +7,7 @@ jobs:
     name: Ubuntu CI
     strategy:
       matrix:
-        makefile: [Makefile.linux, Makefile.debug]
+        buildtype: [Release, Debug]
     runs-on: ubuntu-20.04
     steps:
       - name: Install dependencies
@@ -29,10 +29,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Setup
-        run: ln -s ${{ matrix.makefile }} Makefile
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=${{ matrix.buildtype }} -DAIRSPY=ON -DFUNCUBE=ON -DRTLSDR=ON ..
       - name: Compile
+        working-directory: build
         run: make
       - name: Install
+        working-directory: build
         run: sudo make install
   macos-build:
     name: MacOS CI
@@ -75,8 +80,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Setup
-        run: ln -s Makefile.osx Makefile
+        run: |
+          mkdir build
+          cd build
+          cmake -DAIRSPY=ON -DFUNCUBE=ON -DRTLSDR=ON ..
       - name: Compile
-        run: make
+        working-directory: build
+        run: |
+          make
       - name: Install
+        working-directory: build
         run: sudo make install

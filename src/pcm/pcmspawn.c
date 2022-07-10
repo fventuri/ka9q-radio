@@ -9,7 +9,9 @@
 #include <unistd.h>
 #include <limits.h>
 #include <string.h>
+#if defined(linux)
 #include <bsd/string.h>
+#endif
 #include <netdb.h>
 #include <locale.h>
 #include <sys/time.h>

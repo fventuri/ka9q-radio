@@ -9,6 +9,8 @@ Prerequisites
 Building this package on Debian requires the following packages be installed with 'apt install':
 
 build-essential
+cmake
+pkg-config
 libusb-1.0-0-dev
 libncurses5-dev
 libfftw3-dev
@@ -25,9 +27,23 @@ libopus-dev
 
 Then:
 
-$ ln -s Makefile.linux Makefile
+$ mkdir build
+$ cd build
+$ cmake [optional components] ..
 $ make
 $ sudo make install
+
+Optional components:
+- Airspy front-ends: -DAIRSPY=ON     (i.e. cmake -DAIRSPY=ON ..)
+- FUNcube front-end: -DFUNCUBE=ON
+- HackRF front-end:  -DHACKRF=ON
+- RTL-SDR front-end: -DRTLSDR=ON
+- SDRplay front-end: -DSDRPLAY=ON
+
+Multiple front-ends options can be used at the same time.
+
+To build in debug mode:
+$ cmake -DCMAKE_BUILD_TYPE=Debug ..
 
 This will write into the following directories:
 

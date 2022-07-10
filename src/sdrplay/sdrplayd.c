@@ -32,7 +32,6 @@
 #include "conf.h"
 #include "misc.h"
 #include "multicast.h"
-#include "decimate.h"
 #include "status.h"
 #include "config.h"
 
