@@ -15,6 +15,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -26,11 +27,11 @@
 #include <signal.h>
 #include <locale.h>
 #include <sys/time.h>
-#include <sys/time.h>
 #include <sys/resource.h>
 #include <errno.h>
 #include <syslog.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <iniparser.h>
 #include <sched.h>
@@ -77,8 +78,8 @@ struct sdrstate {
   unsigned int samprate; // True sample rate of single A/D converter
 
   // Hardware
-  int randomizer;
-  int dither;
+  bool randomizer;
+  bool dither;
   unsigned int gain;
   unsigned int att;
 
@@ -120,15 +121,15 @@ static struct option Options[] =
 static char const Optstring[] = "v";
 
 
-static void decode_rx888_commands(struct sdrstate *,uint8_t *,int);
-static void send_rx888_status(struct sdrstate *,int);
+static void decode_rx888_commands(struct sdrstate *,uint8_t const *,int);
+static void send_rx888_status(struct sdrstate *);
 static void rx_callback(struct libusb_transfer *transfer);
 static void *display(void *);
 static void *ncmd(void *);
 static void closedown(int a);
 static void sdr_init(struct sdrstate *sdr);
 static int rx888_init(struct sdrstate *sdr,const char *firmware,unsigned int queuedepth,unsigned int reqsize);
-static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,int dither,int randomizer);
+static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,bool dither,bool randomizer);
 static void rx888_set_att(struct sdrstate *sdr,unsigned int att);
 static void rx888_set_gain(struct sdrstate *sdr,unsigned int gain);
 static void rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate);
@@ -162,6 +163,10 @@ int main(int argc,char *argv[]){
   setlocale(LC_ALL,Locale);
 
   setlinebuf(stdout);
+
+#if !defined(NDEBUG)
+  fprintf(stderr,"Debugging (asserts) enabled\n");
+#endif
 
   struct sdrstate * const sdr = (struct sdrstate *)calloc(1,sizeof(struct sdrstate));
   sdr_init(sdr);
@@ -268,18 +273,21 @@ int main(int argc,char *argv[]){
     iniparser_freedict(Dictionary);
     exit(1);
   }
-
-  int ret;
-  if((ret = rx888_init(sdr,firmware,queuedepth,reqsize)) != 0){
-    fprintf(stdout,"rx888_init() failed\n");
-    iniparser_freedict(Dictionary);
-    exit(1);
+  {
+    char full_firmware_file[PATH_MAX];
+    dist_path(full_firmware_file,sizeof(full_firmware_file),firmware);
+    fprintf(stdout,"Loading firmware file %s\n",full_firmware_file);
+    int ret;
+    if((ret = rx888_init(sdr,full_firmware_file,queuedepth,reqsize)) != 0){
+      fprintf(stdout,"rx888_init() failed\n");
+      iniparser_freedict(Dictionary);
+      exit(1);
+    }
   }
-
   // Enable dithering
-  int const dither = config_getint(Dictionary,Name,"dither",0);
+  bool const dither = config_getint(Dictionary,Name,"dither",0);
   // Enable output randomization
-  int const randomizer = config_getint(Dictionary,Name,"rand",0);
+  bool const randomizer = config_getint(Dictionary,Name,"rand",0);
   rx888_set_dither_and_randomizer(sdr,dither,randomizer);
 
   // Attenuation, default 0
@@ -294,9 +302,9 @@ int main(int argc,char *argv[]){
   // Gain Mode low/high, default high
   unsigned int gain = 0x83;
   char const *gainmode = config_getstring(Dictionary,Name,"gainmode","high");
-  if(strcmp(optarg, "high") == 0){
+  if(strcmp(gainmode, "high") == 0){
     gain |= 0x80;
-  }else if(strcmp(optarg, "low") == 0){
+  }else if(strcmp(gainmode, "low") == 0){
     gain &= ~0x80;
   }else{
     fprintf(stdout,"Invalid gain mode %s\n",gainmode);
@@ -317,13 +325,13 @@ int main(int argc,char *argv[]){
   // Sample Rate, default 32000000
   unsigned int const samprate = config_getint(Dictionary,Name,"samprate",32000000);
   if(samprate < 1000000){
-    fprintf(stdout,"Invalid sample rate %d\n",samprate);
+    fprintf(stdout,"Invalid sample rate %'d\n",samprate);
     iniparser_freedict(Dictionary);
     exit(1);
   }
   rx888_set_samprate(sdr,samprate);
 
-  fprintf(stdout,"Samprate %d; Gain %d, Attenuation %d, Dithering %d, Randomizer %d, Queue depth %d, Request size %d\n",
+  fprintf(stdout,"Samprate %'d; Gain %d, Attenuation %d, Dithering %d, Randomizer %d, Queue depth %d, Request size %d\n",
 	  sdr->samprate,sdr->gain,sdr->att,sdr->dither,sdr->randomizer,sdr->queuedepth,sdr->reqsize);
 
   // When the IP TTL is 0, we're not limited by the Ethernet hardware MTU so select a much larger packet size
@@ -337,9 +345,9 @@ int main(int argc,char *argv[]){
     if(x != -1){
       sdr->blocksize = x;
     } else if(RTP_ttl == 0)
-      sdr->blocksize = 32768;
+      sdr->blocksize = 24576;
     else
-      sdr->blocksize = 960;
+      sdr->blocksize = 720;
   }
 
   sdr->description = config_getstring(Dictionary,Name,"description",NULL);
@@ -405,9 +413,12 @@ int main(int argc,char *argv[]){
 
   pthread_create(&sdr->ncmd_thread,NULL,ncmd,sdr);
   realtime();
-  ret = rx888_start_rx(sdr,rx_callback);
-  assert(ret == 0);
-  send_rx888_status(sdr,1); // Tell the world we're alive
+  {
+    int ret __attribute__ ((unused));
+    ret = rx888_start_rx(sdr,rx_callback);
+    assert(ret == 0);
+  }
+  send_rx888_status(sdr); // Tell the world we're alive
 
   do {
     libusb_handle_events(NULL);
@@ -443,7 +454,7 @@ static void *ncmd(void *arg){
 
       sdr->commands++;
       decode_rx888_commands(sdr,buffer+1,length-1);
-      send_rx888_status(sdr,1);
+      send_rx888_status(sdr);
     }
   }
 }
@@ -475,8 +486,8 @@ static void *display(void *arg){
   return NULL;
 }
 
-static void decode_rx888_commands(struct sdrstate *sdr,uint8_t *buffer,int length){
-  uint8_t *cp = buffer;
+static void decode_rx888_commands(struct sdrstate *sdr,uint8_t const *buffer,int length){
+  uint8_t const *cp = buffer;
   unsigned int gain;
   unsigned int att;
 
@@ -522,7 +533,7 @@ static void decode_rx888_commands(struct sdrstate *sdr,uint8_t *buffer,int lengt
   }
 }
 
-static void send_rx888_status(struct sdrstate *sdr,int full){
+static void send_rx888_status(struct sdrstate *sdr){
   sdr->output_metadata_packets++;
 
   uint8_t packet[2048],*bp;
@@ -564,7 +575,7 @@ static void send_rx888_status(struct sdrstate *sdr,int full){
   encode_int32(&bp,OUTPUT_BITS_PER_SAMPLE,16); // Always
 
   encode_eol(&bp);
-  int len = bp - packet;
+  int const len = bp - packet;
   assert(len < sizeof(packet));
   send(sdr->status_sock,packet,len,0);
 }
@@ -585,16 +596,19 @@ static void rx_callback(struct libusb_transfer *transfer){
 
   if(transfer->status != LIBUSB_TRANSFER_COMPLETED) {
     sdr->failure_count++;
-    fprintf(stdout,"Transfer callback status %s received %d bytes.\n",
-            libusb_error_name(transfer->status), transfer->actual_length);
+    if(Verbose > 1)
+      fprintf(stdout,"Transfer %p callback status %s received %d bytes.\n",transfer,
+	      libusb_error_name(transfer->status), transfer->actual_length);
     if(!stop_transfers) {
       if(libusb_submit_transfer(transfer) == 0)
         sdr->xfers_in_progress++;
     }
+    return;
   }
-  return;
 
   // successful USB transfer
+  if(Verbose)
+    fprintf(stdout,"success %d bytes\n",transfer->actual_length);
   size = transfer->actual_length;
   sdr->success_count++;
   if(sdr->randomizer) {
@@ -602,6 +616,12 @@ static void rx_callback(struct libusb_transfer *transfer){
     for (int i = 0; i < size / 2; i++) {
       samples[i] ^= 0xfffe * (samples[i] & 1);
     }
+  }
+  // Convert to big endian (this is wasteful)
+  {
+    uint16_t *samples = (uint16_t *)transfer->buffer;
+    for(int i=0; i < size/2; i++)
+      samples[i] = htons(samples[i]);
   }
 
   struct rtp_header rtp;
@@ -639,7 +659,8 @@ static void rx_callback(struct libusb_transfer *transfer){
     idp += iov[1].iov_len;
 
     if(sendmsg(sdr->data_sock,&msg,0) == -1){
-      fprintf(stdout,"send: %s\n",strerror(errno));
+      if(Verbose)
+	fprintf(stdout,"send: %s\n",strerror(errno));
       //      usleep(100000); // inject a delay to avoid filling the log
     } else {
       sdr->rtp.packets++;
@@ -674,8 +695,8 @@ static void sdr_init(struct sdrstate *sdr){
   sdr->xfers_in_progress = 0;
   sdr->description = NULL;
   sdr->samprate = 32000000;
-  sdr->randomizer = 0;
-  sdr->dither = 0;
+  sdr->randomizer = false;
+  sdr->dither = false;
   sdr->gain = 0x83;
   sdr->att = 0;
   sdr->queuedepth = 16;
@@ -690,27 +711,26 @@ static int rx888_init(struct sdrstate *sdr,const char *firmware,unsigned int que
   struct libusb_endpoint_descriptor const *endpointDesc;
   struct libusb_ss_endpoint_companion_descriptor *ep_comp;
   struct libusb_interface_descriptor const *interfaceDesc;
-  int ret;
 
   uint16_t vendor_id;  //= 0x04b4;
   uint16_t product_id; // = 0x00f1;
 
-  ret = libusb_init(NULL);
-  if(ret != 0){
-    fprintf(stdout,"Error initializing libusb: %s\n",
-            libusb_error_name(ret));
-    return 1;
+  {
+    int ret = libusb_init(NULL);
+    if(ret != 0){
+      fprintf(stdout,"Error initializing libusb: %s\n",
+	      libusb_error_name(ret));
+      return 1;
+    }
   }
-
   if(firmware){ // there is argument with image file
     vendor_id = 0x04b4;
     product_id = 0x00f3;
     // no firmware. upload the firmware
     sdr->dev_handle =
       libusb_open_device_with_vid_pid(NULL,vendor_id,product_id);
-    if(!sdr->dev_handle){
+    if(!sdr->dev_handle)
       goto has_firmware;
-    }
 
     dev = libusb_get_device(sdr->dev_handle);
 
@@ -734,47 +754,40 @@ has_firmware:
     goto close;
   }
 
-  ret = libusb_kernel_driver_active(sdr->dev_handle,0);
-  if(ret != 0){
-    fprintf(stdout,"Kernel driver active. Trying to detach kernel driver\n");
-    ret = libusb_detach_kernel_driver(sdr->dev_handle,0);
+  {
+    int ret = libusb_kernel_driver_active(sdr->dev_handle,0);
     if(ret != 0){
-      fprintf(stdout,"Could not detach kernel driver from an interface\n");
-      goto close;
+      fprintf(stdout,"Kernel driver active. Trying to detach kernel driver\n");
+      ret = libusb_detach_kernel_driver(sdr->dev_handle,0);
+      if(ret != 0){
+	fprintf(stdout,"Could not detach kernel driver from an interface\n");
+	goto close;
+      }
     }
   }
-
   dev = libusb_get_device(sdr->dev_handle);
 
   libusb_get_config_descriptor(dev, 0, &sdr->config);
 
-  ret = libusb_claim_interface(sdr->dev_handle, sdr->interface_number);
-  if(ret != 0){
-    fprintf(stderr, "Error claiming interface\n");
-    goto end;
+  {
+    int ret = libusb_claim_interface(sdr->dev_handle, sdr->interface_number);
+    if(ret != 0){
+      fprintf(stderr, "Error claiming interface\n");
+      goto end;
+    }
   }
-
   fprintf(stdout,"Successfully claimed interface\n");
-
   interfaceDesc = &(sdr->config->interface[0].altsetting[0]);
-
   endpointDesc = &interfaceDesc->endpoint[0];
-
   libusb_get_device_descriptor(dev,&desc);
-
   libusb_get_ss_endpoint_companion_descriptor(NULL,endpointDesc,&ep_comp);
-
   sdr->pktsize = endpointDesc->wMaxPacketSize * (ep_comp->bMaxBurst + 1);
-
   libusb_free_ss_endpoint_companion_descriptor(ep_comp);
 
   bool allocfail = false;
   sdr->databuffers = (u_char **)calloc(queuedepth,sizeof(u_char *));
-
   sdr->transfers = (struct libusb_transfer **)calloc(queuedepth,sizeof(struct libusb_transfer *));
-
-  fprintf(stdout,"Queue depth: %d, Request size: %d\n",queuedepth,reqsize * sdr->pktsize);
-
+  fprintf(stdout,"Queue depth: %d, Packet size: %d\n",queuedepth,reqsize * sdr->pktsize);
   if((sdr->databuffers != NULL) && (sdr->transfers != NULL)){
     for(unsigned int i = 0; i < queuedepth; i++){
       sdr->databuffers[i] = (u_char *)malloc(reqsize * sdr->pktsize);
@@ -791,34 +804,36 @@ has_firmware:
   if(allocfail) {
     fprintf(stdout,"Failed to allocate buffers and transfers\n");
     free_transfer_buffers(sdr->databuffers,sdr->transfers,sdr->queuedepth);
+    sdr->databuffers = NULL;
+    sdr->transfers = NULL;
   }
   sdr->queuedepth = queuedepth;
   sdr->reqsize = reqsize;
   return 0;
 
 end:
-  if(sdr->dev_handle){
+  if(sdr->dev_handle)
     libusb_release_interface(sdr->dev_handle,sdr->interface_number);
-  }
-  if(sdr->config){
+
+  if(sdr->config)
     libusb_free_config_descriptor(sdr->config);
-  }
+
 close:
-  if(sdr->dev_handle){
+  if(sdr->dev_handle)
     libusb_close(sdr->dev_handle);
-  }
+
   libusb_exit(NULL);
   return 1;
 }
 
-static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,int dither,int randomizer){
+static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,bool dither,bool randomizer){
   uint32_t gpio = 0;
-  if(dither){
+  if(dither)
     gpio |= DITH;
-  }
-  if(randomizer){
+
+  if(randomizer)
     gpio |= RANDO;
-  }
+
   usleep(5000);
   command_send(sdr->dev_handle,GPIOFX3,gpio);
   sdr->dither = dither;
@@ -845,14 +860,19 @@ static void rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate){
 
 static int rx888_start_rx(struct sdrstate *sdr,libusb_transfer_cb_fn callback){
   unsigned int ep = 1 | LIBUSB_ENDPOINT_IN;
-  int rStatus;
+
+  assert(callback != NULL);
   for(unsigned int i = 0; i < sdr->queuedepth; i++){
+    assert(sdr->transfers[i] != NULL);
+    assert(sdr->databuffers[i] != NULL);
+    assert(sdr->dev_handle != NULL);
+
     libusb_fill_bulk_transfer(sdr->transfers[i],sdr->dev_handle,ep,sdr->databuffers[i],
                   sdr->reqsize * sdr->pktsize,callback,(void *)sdr,0);
-    rStatus = libusb_submit_transfer(sdr->transfers[i]);
-    if(rStatus == 0){
+    int const rStatus = libusb_submit_transfer(sdr->transfers[i]);
+    assert(rStatus == 0);
+    if(rStatus == 0)
       sdr->xfers_in_progress++;
-    }
   }
 
   usleep(5000);
@@ -865,27 +885,30 @@ static int rx888_start_rx(struct sdrstate *sdr,libusb_transfer_cb_fn callback){
 
 static void rx888_stop_rx(struct sdrstate *sdr){
   while(sdr->xfers_in_progress != 0){
-    fprintf(stdout,"%d transfers are pending\n",sdr->xfers_in_progress);
+    if(Verbose)
+      fprintf(stdout,"%d transfers are pending\n",sdr->xfers_in_progress);
     libusb_handle_events(NULL);
     usleep(100000);
   }
 
   fprintf(stdout,"Transfers completed\n");
   free_transfer_buffers(sdr->databuffers,sdr->transfers,sdr->queuedepth);
+  sdr->databuffers = NULL;
+  sdr->transfers = NULL;
 
   command_send(sdr->dev_handle,STOPFX3,0);
 }
 
 static void rx888_close(struct sdrstate *sdr){
-  if(sdr->dev_handle){
+  if(sdr->dev_handle)
     libusb_release_interface(sdr->dev_handle,sdr->interface_number);
-  }
-  if(sdr->config){
+
+  if(sdr->config)
     libusb_free_config_descriptor(sdr->config);
-  }
-  if(sdr->dev_handle){
+
+  if(sdr->dev_handle)
     libusb_close(sdr->dev_handle);
-  }
+
   libusb_exit(NULL);
 }
 
@@ -895,21 +918,18 @@ static void free_transfer_buffers(unsigned char **databuffers,
                                   unsigned int queuedepth){
   // Free up any allocated data buffers
   if(databuffers != NULL){
-    for(unsigned int i = 0; i < queuedepth; i++){
-      if(databuffers[i] != NULL){
-        free(databuffers[i]);
-      }
-      databuffers[i] = NULL;
-    }
+    for(unsigned int i = 0; i < queuedepth; i++)
+      FREE(databuffers[i]);
+
     free(databuffers);
   }
 
   // Free up any allocated transfer structures
   if(transfers != NULL){
     for(unsigned int i = 0; i < queuedepth; i++){
-      if(transfers[i] != NULL){
+      if(transfers[i] != NULL)
         libusb_free_transfer(transfers[i]);
-      }
+
       transfers[i] = NULL;
     }
     free(transfers);
