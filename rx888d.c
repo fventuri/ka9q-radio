@@ -11,7 +11,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <complex.h>
-#include <libusb.h>
+#include <libusb-1.0/libusb.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <net/if.h>
 #include <signal.h>
@@ -33,7 +34,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include <iniparser.h>
+#include <iniparser/iniparser.h>
 #include <sched.h>
 
 #include "conf.h"
@@ -80,8 +81,9 @@ struct sdrstate {
   // Hardware
   bool randomizer;
   bool dither;
-  unsigned int gain;
-  unsigned int att;
+  float rf_atten;
+  float rf_gain;
+  int gainmode;
 
   // USB transfer
   unsigned int queuedepth; // Number of requests to queue
@@ -127,16 +129,17 @@ static void rx_callback(struct libusb_transfer *transfer);
 static void *display(void *);
 static void *ncmd(void *);
 static void closedown(int a);
-static void sdr_init(struct sdrstate *sdr);
 static int rx888_init(struct sdrstate *sdr,const char *firmware,unsigned int queuedepth,unsigned int reqsize);
 static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,bool dither,bool randomizer);
-static void rx888_set_att(struct sdrstate *sdr,unsigned int att);
-static void rx888_set_gain(struct sdrstate *sdr,unsigned int gain);
+static void rx888_set_att(struct sdrstate *sdr,float att);
+static void rx888_set_gain(struct sdrstate *sdr,float gain);
 static void rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate);
 static int rx888_start_rx(struct sdrstate *sdr,libusb_transfer_cb_fn callback);
 static void rx888_stop_rx(struct sdrstate *sdr);
 static void rx888_close(struct sdrstate *sdr);
 static void free_transfer_buffers(unsigned char **databuffers,struct libusb_transfer **transfers,unsigned int queuedepth);
+static double val2gain(int g);
+static int gain2val(int m, double gain);
 
 dictionary *Dictionary;
 char const *Name;
@@ -169,7 +172,6 @@ int main(int argc,char *argv[]){
 #endif
 
   struct sdrstate * const sdr = (struct sdrstate *)calloc(1,sizeof(struct sdrstate));
-  sdr_init(sdr);
 
   int c;
   while((c = getopt_long(argc,argv,Optstring,Options,NULL)) != -1){
@@ -291,48 +293,41 @@ int main(int argc,char *argv[]){
   rx888_set_dither_and_randomizer(sdr,dither,randomizer);
 
   // Attenuation, default 0
-  unsigned int const att = config_getint(Dictionary,Name,"att",0);
-  if(att < 0 || att > 127){
-    fprintf(stdout,"Invalid attenuation value %d\n",att);
-    iniparser_freedict(Dictionary);
-    exit(1);
-  }
-  rx888_set_att(sdr,att);
+  {
+    float att = fabsf(config_getfloat(Dictionary,Name,"att",0));
+    if(att > 31.5)
+      att = 31.5;
+    rx888_set_att(sdr,att);
 
-  // Gain Mode low/high, default high
-  unsigned int gain = 0x83;
-  char const *gainmode = config_getstring(Dictionary,Name,"gainmode","high");
-  if(strcmp(gainmode, "high") == 0){
-    gain |= 0x80;
-  }else if(strcmp(gainmode, "low") == 0){
-    gain &= ~0x80;
-  }else{
-    fprintf(stdout,"Invalid gain mode %s\n",gainmode);
-    iniparser_freedict(Dictionary);
-    exit(1);
-  }
-  // Gain value, default 3
-  int const gainvalue = config_getint(Dictionary,Name,"gain",3);
-  if(gainvalue < 0 || gainvalue > 127){
-    fprintf(stdout,"Invalid gain value %d\n",gainvalue);
-    iniparser_freedict(Dictionary);
-    exit(1);
-  }
-  gain &= ~0x7f;
-  gain |= gainvalue;
-  rx888_set_gain(sdr,gain);
+    // Gain Mode low/high, default high
+    char const *gainmode = config_getstring(Dictionary,Name,"gainmode","high");
+    if(strcmp(gainmode, "high") == 0)
+      sdr->gainmode = 1;
+    else if(strcmp(gainmode, "low") == 0)
+      sdr->gainmode = 0;
+    else {
+      fprintf(stdout,"Invalid gain mode %s, default high\n",gainmode);
+      sdr->gainmode = 1;
+    }
+    // Gain value, default +1.5 dB
+    float gain = config_getfloat(Dictionary,Name,"gain",1.5);
+    if(gain > 34.0)
+      gain = 34.0;
+    
+    rx888_set_gain(sdr,gain);
 
-  // Sample Rate, default 32000000
-  unsigned int const samprate = config_getint(Dictionary,Name,"samprate",32000000);
-  if(samprate < 1000000){
-    fprintf(stdout,"Invalid sample rate %'d\n",samprate);
-    iniparser_freedict(Dictionary);
-    exit(1);
+    // Sample Rate, default 32000000 (32 MHz)
+    unsigned int samprate = config_getint(Dictionary,Name,"samprate",32000000);
+    if(samprate < 1000000){
+      int const minsamprate = 1000000; // 1 MHz?
+      fprintf(stdout,"Invalid sample rate %'d, forcing %'d\n",samprate,minsamprate);
+      samprate = minsamprate;
+    }
+    rx888_set_samprate(sdr,samprate);
   }
-  rx888_set_samprate(sdr,samprate);
-
-  fprintf(stdout,"Samprate %'d; Gain %d, Attenuation %d, Dithering %d, Randomizer %d, Queue depth %d, Request size %d\n",
-	  sdr->samprate,sdr->gain,sdr->att,sdr->dither,sdr->randomizer,sdr->queuedepth,sdr->reqsize);
+  
+  fprintf(stdout,"Samprate %'d, Gain %.1f dB, Attenuation %.1f dB, Dithering %d, Randomizer %d, USB Queue depth %d, USB Request size %d * pktsize %d = %'d bytes\n",
+	  sdr->samprate,sdr->rf_gain,sdr->rf_atten,sdr->dither,sdr->randomizer,sdr->queuedepth,sdr->reqsize,sdr->pktsize,sdr->reqsize * sdr->pktsize);
 
   // When the IP TTL is 0, we're not limited by the Ethernet hardware MTU so select a much larger packet size
   // unless one has been set explicitly
@@ -340,33 +335,30 @@ int main(int argc,char *argv[]){
 
   RTP_ttl = config_getint(Dictionary,Name,"data-ttl",0); // Default to TTL=0
   Status_ttl = config_getint(Dictionary,Name,"status-ttl",1); // Default 1 for status; much lower bandwidth
-  {
-    int const x = config_getint(Dictionary,Name,"blocksize",-1);
-    if(x != -1){
-      sdr->blocksize = x;
-    } else if(RTP_ttl == 0)
-      sdr->blocksize = 24576;
-    else
-      sdr->blocksize = 720;
-  }
+
+  // When TTL=0, packets never reach the Ethernet hardware so the usual 1500 byte MTU doesn't apply.
+  // Try to reach the IP max packet size of 65,536 bytes
+  if(RTP_ttl == 0)
+    sdr->blocksize = 24576; // * 2 bytes/sample = 49,152 bytes/packet
+  else
+    sdr->blocksize = 720;   // * 2 bytes/sample = 1440 bytes/packet
+  sdr->blocksize = config_getint(Dictionary,Name,"blocksize",sdr->blocksize);
 
   sdr->description = config_getstring(Dictionary,Name,"description",NULL);
   {
+    // Random based on time of day, if not set
     time_t tt;
     time(&tt);
     sdr->rtp.ssrc = config_getint(Dictionary,Name,"ssrc",tt);
   }
+  sdr->rtp_type = PCM_MONO_LE_PT; // 16 bits/sample, mono, little endian
   // Default is AF12 left shifted 2 bits
   IP_tos = config_getint(Dictionary,Name,"tos",48);
-  sdr->data_dest = config_getstring(Dictionary,Name,"data",NULL);
+  sdr->data_dest = config_getstring(Dictionary,Name,"data","rx888-pcm.local");
   // Set up output sockets
-  if(sdr->data_dest == NULL){
-    sdr->data_dest = "rx888-pcm.local";
-  }
-  sdr->metadata_dest = config_getstring(Dictionary,Name,"status",NULL);
-  if(sdr->metadata_dest == NULL){
-    sdr->data_dest = "rx888-status.local";
-  }
+
+  sdr->metadata_dest = config_getstring(Dictionary,Name,"status","rx888-status.local");
+
   // Multicast output interface for both data and status
   Iface = config_getstring(Dictionary,Name,"iface",NULL);
 
@@ -375,7 +367,9 @@ int main(int argc,char *argv[]){
     // Service name, if present, must be unique
     // Description, if present becomes TXT record if present
     avahi_start(sdr->description,"_ka9q-ctl._udp",DEFAULT_STAT_PORT,sdr->metadata_dest,ElfHashString(sdr->metadata_dest),sdr->description);
-    avahi_start(sdr->description,"_rtp._udp",DEFAULT_RTP_PORT,sdr->data_dest,ElfHashString(sdr->data_dest),sdr->description);
+    // don't register data service if using local UNIX socket
+    if(sdr->data_dest[0] != '/') // Don't announce a UNIX local socket
+      avahi_start(sdr->description,"_rtp._udp",DEFAULT_RTP_PORT,sdr->data_dest,ElfHashString(sdr->data_dest),sdr->description);
   }
   {
     // Note: iface as part of address is ignored, and it breaks avahi_start anyway
@@ -401,6 +395,10 @@ int main(int argc,char *argv[]){
       exit(1);
     }
   }
+  fprintf(stdout,"%s: iface %s; status -> %s, data -> %s (TTL %d, TOS %d, %d samples/packet)\n",
+	  sdr->description,Iface,formatsock(&sdr->output_metadata_dest_address),formatsock(&sdr->output_data_dest_address),
+	  RTP_ttl,IP_tos,sdr->blocksize);
+	  
 
   signal(SIGPIPE,SIG_IGN);
   signal(SIGINT,closedown);
@@ -476,9 +474,9 @@ static void *display(void *arg){
     if(stat_point != -1)
       fseeko(sdr->status,stat_point,SEEK_SET);
 
-    fprintf(sdr->status,"%4d%4d%c",
-	    sdr->gain,	
-	    sdr->att,
+    fprintf(sdr->status,"%4.1f%4.1f%c",
+	    sdr->rf_gain,	
+	    sdr->rf_atten,
 	    eol);
     fflush(sdr->status);
     usleep(100000); // 10 Hz
@@ -488,8 +486,7 @@ static void *display(void *arg){
 
 static void decode_rx888_commands(struct sdrstate *sdr,uint8_t const *buffer,int length){
   uint8_t const *cp = buffer;
-  unsigned int gain;
-  unsigned int att;
+
 
   while(cp - buffer < length){
     int ret __attribute__((unused)); // Won't be used when asserts are disabled
@@ -518,13 +515,17 @@ static void decode_rx888_commands(struct sdrstate *sdr,uint8_t const *buffer,int
     case COMMAND_TAG:
       sdr->command_tag = decode_int(cp,optlen);
       break;
-    case LNA_GAIN:
-      gain = decode_int(cp,optlen);
-      rx888_set_gain(sdr,gain);
+    case RF_GAIN:
+      {
+	float gain = decode_float(cp,optlen);
+	rx888_set_gain(sdr,gain);
+      }
       break;
-    case IF_GAIN:
-      att = decode_int(cp,optlen);
-      rx888_set_att(sdr,att);
+    case RF_ATTEN:
+      {
+	float a = decode_float(cp,optlen);
+	rx888_set_att(sdr,a);
+      }
       break;
     default: // Ignore all others
       break;
@@ -549,10 +550,16 @@ static void send_rx888_status(struct sdrstate *sdr){
   if(sdr->description)
     encode_string(&bp,DESCRIPTION,sdr->description,strlen(sdr->description));
 
-  // Source address we're using to send data
-  encode_socket(&bp,OUTPUT_DATA_SOURCE_SOCKET,&sdr->output_data_source_address);
   // Where we're sending output
-  encode_socket(&bp,OUTPUT_DATA_DEST_SOCKET,&sdr->output_data_dest_address);
+
+  if(sdr->data_dest[0] != '/'){
+    // Source address we're using to send data
+    encode_socket(&bp,OUTPUT_DATA_SOURCE_SOCKET,&sdr->output_data_source_address);
+    encode_socket(&bp,OUTPUT_DATA_DEST_SOCKET,&sdr->output_data_dest_address); // IPv4/v6 socket
+  } else {
+    // AF_LINUX local socket, send path name as string
+    encode_string(&bp,OUTPUT_DATA_UNIX_SOCKET,sdr->data_dest,strlen(sdr->data_dest)); // AF_UNIX socket, send local pathname as string
+  }
   encode_int32(&bp,OUTPUT_SSRC,sdr->rtp.ssrc);
   encode_byte(&bp,OUTPUT_TTL,RTP_ttl);
   encode_int32(&bp,INPUT_SAMPRATE,sdr->samprate);
@@ -560,8 +567,8 @@ static void send_rx888_status(struct sdrstate *sdr){
   encode_int64(&bp,OUTPUT_METADATA_PACKETS,sdr->output_metadata_packets);
 
   // Front end
-  encode_byte(&bp,LNA_GAIN,sdr->gain);
-  encode_byte(&bp,IF_GAIN,sdr->att);
+  encode_float(&bp,RF_ATTEN,sdr->rf_atten);
+  encode_float(&bp,RF_GAIN,sdr->rf_gain);
 
   // Tuning
   encode_double(&bp,RADIO_FREQUENCY,0);
@@ -581,14 +588,15 @@ static void send_rx888_status(struct sdrstate *sdr){
 }
 
 
-int ThreadnameSet;
+bool ThreadnameSet;
+bool Marker_sent;
 // Callback called with incoming receiver data from A/D
 static void rx_callback(struct libusb_transfer *transfer){
   int size = 0;
 
   if(!ThreadnameSet){
     pthread_setname("rx888-cb");
-    ThreadnameSet = 1;
+    ThreadnameSet = true;
   }
   struct sdrstate * const sdr = (struct sdrstate *)transfer->user_data;
 
@@ -607,8 +615,6 @@ static void rx_callback(struct libusb_transfer *transfer){
   }
 
   // successful USB transfer
-  if(Verbose)
-    fprintf(stdout,"success %d bytes\n",transfer->actual_length);
   size = transfer->actual_length;
   sdr->success_count++;
   if(sdr->randomizer) {
@@ -617,15 +623,21 @@ static void rx_callback(struct libusb_transfer *transfer){
       samples[i] ^= 0xfffe * (samples[i] & 1);
     }
   }
+#if 0 // Now using PCM_MONO_LE_PT
   // Convert to big endian (this is wasteful)
   {
     uint16_t *samples = (uint16_t *)transfer->buffer;
     for(int i=0; i < size/2; i++)
       samples[i] = htons(samples[i]);
   }
-
+#endif
   struct rtp_header rtp;
   memset(&rtp,0,sizeof(rtp));
+  if(!Marker_sent){
+    rtp.marker = true;
+    Marker_sent = true;
+  }
+
   rtp.version = RTP_VERS;
   rtp.type = sdr->rtp_type;
   rtp.ssrc = sdr->rtp.ssrc;
@@ -673,7 +685,6 @@ static void rx_callback(struct libusb_transfer *transfer){
     if(libusb_submit_transfer(transfer) == 0)
       sdr->xfers_in_progress++;
   }
-  return;
 }
 
 static void closedown(int a){
@@ -684,37 +695,7 @@ static void closedown(int a){
     sigterm_exit = true;
 }
 
-static void sdr_init(struct sdrstate *sdr){
-  sdr->dev_handle = NULL;
-  sdr->interface_number = 0;
-  sdr->config = NULL;
-  sdr->success_count = 0;
-  sdr->failure_count = 0;
-  sdr->transfer_size = 0;
-  sdr->transfer_index = 0;
-  sdr->xfers_in_progress = 0;
-  sdr->description = NULL;
-  sdr->samprate = 32000000;
-  sdr->randomizer = false;
-  sdr->dither = false;
-  sdr->gain = 0x83;
-  sdr->att = 0;
-  sdr->queuedepth = 16;
-  sdr->reqsize = 8;
-
-  sdr->rtp_type = PCM_MONO_PT;
-}
-
 static int rx888_init(struct sdrstate *sdr,const char *firmware,unsigned int queuedepth,unsigned int reqsize){
-  struct libusb_device_descriptor desc;
-  struct libusb_device *dev;
-  struct libusb_endpoint_descriptor const *endpointDesc;
-  struct libusb_ss_endpoint_companion_descriptor *ep_comp;
-  struct libusb_interface_descriptor const *interfaceDesc;
-
-  uint16_t vendor_id;  //= 0x04b4;
-  uint16_t product_id; // = 0x00f1;
-
   {
     int ret = libusb_init(NULL);
     if(ret != 0){
@@ -723,37 +704,37 @@ static int rx888_init(struct sdrstate *sdr,const char *firmware,unsigned int que
       return 1;
     }
   }
-  if(firmware){ // there is argument with image file
-    vendor_id = 0x04b4;
-    product_id = 0x00f3;
-    // no firmware. upload the firmware
+  if(firmware != NULL){ // there is argument with image file
+    // Temporary ID when device doesn't already have firmware
+    uint16_t const vendor_id = 0x04b4;
+    uint16_t const product_id = 0x00f3;
+    // does it already have firmware?
     sdr->dev_handle =
       libusb_open_device_with_vid_pid(NULL,vendor_id,product_id);
-    if(!sdr->dev_handle)
-      goto has_firmware;
-
-    dev = libusb_get_device(sdr->dev_handle);
-
-    if(ezusb_load_ram(sdr->dev_handle,firmware,FX_TYPE_FX3,IMG_TYPE_IMG,1) == 0){
-      fprintf(stdout,"Firmware updated\n");
+    if(sdr->dev_handle){
+      // No, doesn't have firmware
+      struct libusb_device *dev = libusb_get_device(sdr->dev_handle);
+      
+      if(ezusb_load_ram(sdr->dev_handle,firmware,FX_TYPE_FX3,IMG_TYPE_IMG,1) == 0){
+	fprintf(stdout,"Firmware updated\n");
+      } else {
+	fprintf(stdout,"Firmware upload failed for device %d.%d (logical).\n",
+		libusb_get_bus_number(dev),libusb_get_device_address(dev));
+	return 1;
+      }
+      sleep(2); // this seems rather long
     } else {
-      fprintf(stdout,"Firmware upload failed for device %d.%d (logical).\n",
-              libusb_get_bus_number(dev),libusb_get_device_address(dev));
-      return 1;
-    }
-    sleep(2);
+      fprintf(stdout,"Firmware already loaded\n");
+    }      
   }
-
-has_firmware:
-
-  vendor_id = 0x04b4;
-  product_id = 0x00f1;
+  // Device changes product_id when it has firmware
+  uint16_t const vendor_id = 0x04b4;
+  uint16_t const product_id = 0x00f1;
   sdr->dev_handle = libusb_open_device_with_vid_pid(NULL,vendor_id,product_id);
   if(!sdr->dev_handle){
     fprintf(stdout,"Error or device could not be found, try loading firmware\n");
     goto close;
   }
-
   {
     int ret = libusb_kernel_driver_active(sdr->dev_handle,0);
     if(ret != 0){
@@ -765,29 +746,47 @@ has_firmware:
       }
     }
   }
-  dev = libusb_get_device(sdr->dev_handle);
-
+  struct libusb_device *dev = libusb_get_device(sdr->dev_handle);
+  assert(dev != NULL);
+  enum libusb_speed usb_speed = libusb_get_device_speed(dev);
+  // fv
+  fprintf(stdout,"USB speed: %d\n",usb_speed);
+  if(usb_speed < LIBUSB_SPEED_SUPER){
+    fprintf(stdout,"USB device speed (%d) is not at least SuperSpeed\n",usb_speed);
+    exit(1);
+  }
   libusb_get_config_descriptor(dev, 0, &sdr->config);
-
   {
-    int ret = libusb_claim_interface(sdr->dev_handle, sdr->interface_number);
+    int const ret = libusb_claim_interface(sdr->dev_handle, sdr->interface_number);
     if(ret != 0){
       fprintf(stderr, "Error claiming interface\n");
       goto end;
     }
   }
   fprintf(stdout,"Successfully claimed interface\n");
-  interfaceDesc = &(sdr->config->interface[0].altsetting[0]);
-  endpointDesc = &interfaceDesc->endpoint[0];
-  libusb_get_device_descriptor(dev,&desc);
-  libusb_get_ss_endpoint_companion_descriptor(NULL,endpointDesc,&ep_comp);
-  sdr->pktsize = endpointDesc->wMaxPacketSize * (ep_comp->bMaxBurst + 1);
-  libusb_free_ss_endpoint_companion_descriptor(ep_comp);
-
+  {
+    // All this just to get sdr->pktsize?
+    struct libusb_interface_descriptor const *interfaceDesc = &(sdr->config->interface[0].altsetting[0]);
+    assert(interfaceDesc != NULL);
+    struct libusb_endpoint_descriptor const *endpointDesc = &interfaceDesc->endpoint[0];
+    assert(endpointDesc != NULL);
+    struct libusb_device_descriptor desc;
+    memset(&desc,0,sizeof(desc));
+    libusb_get_device_descriptor(dev,&desc);
+    struct libusb_ss_endpoint_companion_descriptor *ep_comp = NULL;
+    int rc = libusb_get_ss_endpoint_companion_descriptor(NULL,endpointDesc,&ep_comp);
+    if(rc != 0){
+      fprintf(stdout,"libusb_get_ss_endpoint_companion_descriptor returned: %s (%d)\n",libusb_error_name(rc),rc);
+      exit(1);
+    }
+    assert(ep_comp != NULL);
+    sdr->pktsize = endpointDesc->wMaxPacketSize * (ep_comp->bMaxBurst + 1);
+    libusb_free_ss_endpoint_companion_descriptor(ep_comp);
+  }
   bool allocfail = false;
   sdr->databuffers = (u_char **)calloc(queuedepth,sizeof(u_char *));
   sdr->transfers = (struct libusb_transfer **)calloc(queuedepth,sizeof(struct libusb_transfer *));
-  fprintf(stdout,"Queue depth: %d, Packet size: %d\n",queuedepth,reqsize * sdr->pktsize);
+
   if((sdr->databuffers != NULL) && (sdr->transfers != NULL)){
     for(unsigned int i = 0; i < queuedepth; i++){
       sdr->databuffers[i] = (u_char *)malloc(reqsize * sdr->pktsize);
@@ -803,6 +802,7 @@ has_firmware:
 
   if(allocfail) {
     fprintf(stdout,"Failed to allocate buffers and transfers\n");
+    // Is it OK if one or both of these is already null?
     free_transfer_buffers(sdr->databuffers,sdr->transfers,sdr->queuedepth);
     sdr->databuffers = NULL;
     sdr->transfers = NULL;
@@ -817,10 +817,12 @@ end:
 
   if(sdr->config)
     libusb_free_config_descriptor(sdr->config);
+  sdr->config = NULL;
 
 close:
   if(sdr->dev_handle)
     libusb_close(sdr->dev_handle);
+  sdr->dev_handle = NULL;
 
   libusb_exit(NULL);
   return 1;
@@ -840,16 +842,19 @@ static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,bool dither,boo
   sdr->randomizer = randomizer;
 }
 
-static void rx888_set_att(struct sdrstate *sdr,unsigned int att){
+static void rx888_set_att(struct sdrstate *sdr,float att){
   usleep(5000);
-  argument_send(sdr->dev_handle,DAT31_ATT,att);
-  sdr->att = att;
+  sdr->rf_atten = att;
+  int arg = (int)(att * 2);
+  argument_send(sdr->dev_handle,DAT31_ATT,arg);
 }
 
-static void rx888_set_gain(struct sdrstate *sdr,unsigned int gain){
+static void rx888_set_gain(struct sdrstate *sdr,float gain){
   usleep(5000);
-  argument_send(sdr->dev_handle,AD8340_VGA,gain);
-  sdr->gain = gain;
+
+  int arg = gain2val(sdr->gainmode,gain);
+  argument_send(sdr->dev_handle,AD8340_VGA,arg);
+  sdr->rf_gain = val2gain(arg); // Store actual nearest value
 }
 
 static void rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate){
@@ -905,10 +910,12 @@ static void rx888_close(struct sdrstate *sdr){
 
   if(sdr->config)
     libusb_free_config_descriptor(sdr->config);
+  sdr->config = NULL;
 
   if(sdr->dev_handle)
     libusb_close(sdr->dev_handle);
 
+  sdr->dev_handle = NULL;
   libusb_exit(NULL);
 }
 
@@ -921,7 +928,7 @@ static void free_transfer_buffers(unsigned char **databuffers,
     for(unsigned int i = 0; i < queuedepth; i++)
       FREE(databuffers[i]);
 
-    free(databuffers);
+    free(databuffers); // caller will have to nail the pointer
   }
 
   // Free up any allocated transfer structures
@@ -932,6 +939,32 @@ static void free_transfer_buffers(unsigned char **databuffers,
 
       transfers[i] = NULL;
     }
-    free(transfers);
+    free(transfers); // caller will have to nail the pointer
   }
+}
+
+// gain computation for AD8370 variable gain amplifier
+static double const vernier = 0.055744;
+static double const pregain = 7.079458;
+
+static double val2gain(int g){
+  int const msb = g & 128 ? true : false;
+  int const gaincode = g & 127;
+  double av = gaincode * vernier * (1 + (pregain - 1) * msb);
+  return voltage2dB(av); // decibels
+}
+
+static int gain2val(int m, double gain){
+  if(m < 0)
+    m = 0;
+  else if(m > 1)
+    m = 1;
+  int g = round(dB2voltage(gain) / (vernier * (1 + (pregain - 1)* m)));
+
+  if(g > 127)
+    g = 127;
+  if(g < 0)
+    g = 0;
+  g |= (m << 7);
+  return g;
 }

@@ -146,6 +146,8 @@ void *proc_samples(void *arg){
 
   realtime();
 
+  int bad_rtp_count = 0;
+
   while(1){
     // Receive I/Q data from front end
     // Packet consists of Ethernet, IP and UDP header (already stripped)
@@ -185,6 +187,7 @@ void *proc_samples(void *arg){
     case AIRSPY_PACKED:
       sc = 2 * size / (3 * sizeof(int8_t));
       break;
+    case PCM_MONO_LE_PT:
     case PCM_MONO_PT: // 16-bit real
       sc = size / sizeof(int16_t);
       break;
@@ -197,7 +200,8 @@ void *proc_samples(void *arg){
     case IQ_PT8: // 8-bit ints no metadata
       sc = size / (2 * sizeof(int8_t));
       break;
-    case PCM_STEREO_PT: // Big-endian 16 bits, no metadata header
+    case PCM_STEREO_LE_PT:
+    case PCM_STEREO_PT: // 16 bits, no metadata header
       sc = size / (2 * sizeof(int16_t));
       break;
     case IQ_PT12:       // Big endian packed 12 bits, no metadata
@@ -208,14 +212,20 @@ void *proc_samples(void *arg){
       break;
     }
     int const sampcount = sc; // gets used a lot, flag it const
-    if(pkt.rtp.ssrc != Frontend.input.rtp.ssrc){
-      // SSRC changed; reset sample count.
+
+    // All front ends should eventually set rtp.marker once at start
+    // RTP marker bits occur routinely in demodulated FM, but here they mean a complete restart
+    if(pkt.rtp.marker || pkt.rtp.ssrc != Frontend.input.rtp.ssrc || bad_rtp_count > 100){
+      // stream restart, SSRC change or excessive unexpected RTP packet/sequence numbers
       // rtp_process will reset packet count
       Frontend.input.samples = 0;
+      Frontend.input.rtp.init = false;
+      bad_rtp_count = 0;
     }
     int const time_step = rtp_process(&Frontend.input.rtp,&pkt.rtp,sampcount);
-    if(time_step < 0 || time_step > 192000){ // NOTE HARDWIRED SAMPRATE
+    if(time_step < 0 || time_step > 192000){ // NOTE HARDWIRED SAMPRATE - fix this
       // Old samples, or too big a jump; drop. Shouldn't happen if sequence number isn't old
+      bad_rtp_count++;
       continue;
     } else if(time_step > 0){
       // Samples were lost. Inject enough zeroes to keep the sample count and LO phase correct
@@ -248,7 +258,7 @@ void *proc_samples(void *arg){
 	Frontend.sdr.output_level = f_energy / sampcount; // average A/D level, not including analog gain
       }
       break;
-    case AIRSPY_PACKED:
+    case AIRSPY_PACKED: // e.g., Airspy R2
       if(Frontend.in->input.r != NULL){    // Ensure the data is the right type for the filter to avoid segfaults
 	// idiosyncratic packed format from Airspy-R2
 	// Some tricky optimizations here.
@@ -301,12 +311,29 @@ void *proc_samples(void *arg){
 	uint64_t in_energy = 0; // A/D energy accumulator for integer formats only	
 	float const inv_gain = SCALE16 / Frontend.sdr.gain;
 	uint16_t const *sp = (uint16_t *)dp;
+	float buf[sampcount];
 	for(int i=0; i<sampcount; i++){
 	  // ntohs() returns UNSIGNED so the cast is necessary!
 	  int const s = (int16_t)ntohs(*sp++);
 	  in_energy += s * s;
-	  put_rfilter(Frontend.in,s * inv_gain);
+	  buf[i] = s * inv_gain;
 	}
+	write_rfilter(Frontend.in,buf,sampcount);
+	Frontend.sdr.output_level = 2 * in_energy * SCALE16 * SCALE16 / sampcount;
+      }
+      break;
+    case PCM_MONO_LE_PT: // 16 bits little endian integer real, e,g., rx888
+      if(Frontend.in->input.r != NULL){
+	uint64_t in_energy = 0; // A/D energy accumulator for integer formats only	
+	float const inv_gain = SCALE16 / Frontend.sdr.gain;
+	int16_t const *sp = (int16_t *)dp;
+	float buf[sampcount];
+	for(int i=0; i<sampcount; i++){
+	  int const s = *sp++;
+	  in_energy += s * s;
+	  buf[i] = s * inv_gain;
+	}
+	write_rfilter(Frontend.in,buf,sampcount);
 	Frontend.sdr.output_level = 2 * in_energy * SCALE16 * SCALE16 / sampcount;
       }
       break;
@@ -349,6 +376,23 @@ void *proc_samples(void *arg){
 	  // ntohs() returns UNSIGNED
 	  int const rs = (int16_t)ntohs(*sp++);
 	  int const is = (int16_t)ntohs(*sp++);
+	  in_energy += rs * rs + is * is;
+	  complex float samp;
+	  __real__ samp = rs;
+	  __imag__ samp = is;
+	  put_cfilter(Frontend.in,samp * inv_gain);
+	}
+	Frontend.sdr.output_level = in_energy * SCALE16 * SCALE16 / sampcount;
+      }
+      break;
+    case PCM_STEREO_LE_PT:    // 16-bit 48 kHz (or other) dual channel little endian
+      if(Frontend.in->input.c != NULL){
+	uint64_t in_energy = 0; // A/D energy accumulator for integer formats only		
+	float const inv_gain = SCALE16 / Frontend.sdr.gain;
+	int16_t const *sp = (int16_t *)dp;
+	for(int i=0; i<sampcount; i++){
+	  int const rs = *sp++;
+	  int const is = *sp++;
 	  in_energy += rs * rs + is * is;
 	  complex float samp;
 	  __real__ samp = rs;

@@ -11,7 +11,6 @@ COPTS=-march=native -std=gnu11 -pthread -Wall -funsafe-math-optimizations -D_GNU
 LDOPTS=-L/usr/local/lib
 #LDOPTS=-g -L/usr/local/lib
 
-INCLUDES+=-I/usr/include/iniparser/ -I/usr/include/libusb-1.0/
 CFLAGS=$(DOPTS) $(COPTS) $(INCLUDES)
 BINDIR=/usr/local/bin
 LIBDIR=/usr/local/share/ka9q-radio
@@ -28,7 +27,7 @@ AFILES=bandplan.txt help.txt modes.conf id.txt monitor-help.txt
 
 SYSTEMD_FILES=airspyd@.service airspyhfd@.service cwd.service funcubed@.service hackrf@.service packetd.service radiod@.service aprsfeed.service opusd@.service recordings@.service stereod.service rdsd.service wspr-decoded.service horusdemod.service sdrplayd@.service ft8-decoded.service rx888d@.service
 
-UDEV_FILES=20-rtlsdr.rules 52-airspy.rules 52-airspyhf.rules 66-hackrf.rules 68-funcube-dongle-proplus.rules 68-funcube-dongle.rules
+UDEV_FILES=20-rtlsdr.rules 52-airspy.rules 52-airspyhf.rules 66-hackrf.rules 68-funcube-dongle-proplus.rules 68-funcube-dongle.rules 99-rx888.rules
 
 CONF_FILES=funcubed.conf \
 			 opusd@hf.conf opusd@hfdl.conf opusd@fm.conf opusd@aviation.conf opusd@packet.conf \
@@ -73,7 +72,7 @@ install: $(DAEMONS) $(EXECS) $(AFILES) $(SYSTEMD_FILES) $(UDEV_FILES) $(CONF_FIL
 	install -o root -m 0644 -D --target-directory=/etc/udev/rules.d $(UDEV_FILES)
 	install -o root -m 0644 -D --target-directory=/etc/modprobe.d $(BLACKLIST)
 	install -o root -m 0644 -D --target-directory=/etc/logrotate.d $(LOGROTATE_FILES)
-	install -o root -m 0644 -D --target-directory=/etc/radio $(CONF_FILES);
+	install -o root -m 0664 -D --target-directory=/etc/radio $(CONF_FILES);
 	mkdir -p /etc/fftw /etc/radio $(VARDIR) /etc/radio/airspyd.conf.d
 	chgrp radio $(VARDIR) /etc/radio /etc/fftw
 	chmod g+ws $(VARDIR) /etc/radio /etc/fftw

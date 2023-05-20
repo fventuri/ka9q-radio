@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <limits.h>
-#include <iniparser.h>
+#include <iniparser/iniparser.h>
 
 #include "multicast.h"
 #include "osc.h"
@@ -75,6 +75,8 @@ struct frontend {
     uint8_t lna_gain;
     uint8_t mixer_gain;
     uint8_t if_gain;
+    float rf_atten;
+    float rf_gain;
     bool direct_conversion; // Avoid 0 Hz if set
     bool isreal;            // Front end stream is real-only
     int bitspersample; // 8, 12 or 16

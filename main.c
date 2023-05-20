@@ -26,7 +26,7 @@
 #include <getopt.h>
 #include <ctype.h>
 #include <arpa/inet.h>
-#include <iniparser.h>
+#include <iniparser/iniparser.h>
 #include <net/if.h>
 #include <sched.h>
 
@@ -38,6 +38,7 @@
 #include "config.h"
 
 // Configuration constants & defaults
+static int const DEFAULT_FFT_THREADS = 2;
 static int const DEFAULT_IP_TOS = 48;
 static int const DEFAULT_MCAST_TTL = 1;
 static float const DEFAULT_BLOCKTIME = 20.0;
@@ -64,6 +65,7 @@ int RTCP_enable = false;
 int SAP_enable = false;
 static int Overlap;
 char const *Name;
+extern int Nthreads;
 
 static int64_t Starttime;      // System clock at timestamp 0, for RTCP
 pthread_t Status_thread;
@@ -220,7 +222,7 @@ static int setup_frontend(char const *arg){
 
   // We must acquire a status stream before we can proceed further
   pthread_mutex_lock(&Frontend.sdr.status_mutex);
-  while(Frontend.sdr.samprate == 0 || Frontend.input.data_dest_address.ss_family == 0)
+  while(Frontend.sdr.samprate == 0 || (Frontend.input.data_dest_address.ss_family == 0))
     pthread_cond_wait(&Frontend.sdr.status_cond,&Frontend.sdr.status_mutex);
   pthread_mutex_unlock(&Frontend.sdr.status_mutex);
 
@@ -287,9 +289,7 @@ static int loadconfig(char const * const file){
   Mcast_ttl = config_getint(Configtable,global,"ttl",DEFAULT_MCAST_TTL);
   Blocktime = fabs(config_getdouble(Configtable,global,"blocktime",DEFAULT_BLOCKTIME));
   Overlap = abs(config_getint(Configtable,global,"overlap",DEFAULT_OVERLAP));
-#if 0 // Make this configurable again someday
   Nthreads = config_getint(Configtable,global,"fft-threads",DEFAULT_FFT_THREADS);
-#endif
   RTCP_enable = config_getboolean(Configtable,global,"rtcp",0);
   SAP_enable = config_getboolean(Configtable,global,"sap",0);
   Modefile = config_getstring(Configtable,global,"mode-file",Modefile);
@@ -353,13 +353,17 @@ static int loadconfig(char const * const file){
     // fall back to setting in [global] if parameter not specified in individual section
     // Set parameters even when unused for the current demodulator in case the demod is changed later
     char const * mode = config2_getstring(Configtable,Configtable,global,sname,"mode",NULL);
-    if(mode == NULL || strlen(mode) == 0)
-      fprintf(stdout,"warning: mode preset not selected, using built-in defaults\n");
+    if(mode == NULL || strlen(mode) == 0){
+      fprintf(stdout,"warning: mode not specified in section %s or [global], ignoring section\n",sname);
+      continue;
+    }
 
     struct demod *demod = alloc_demod();
-    if(loadmode(demod,Modetable,mode,1) != 0)
-      fprintf(stdout,"loadmode(%s,%s) failed\n",Modefile,mode);
-
+    if(loadmode(demod,Modetable,mode,1) != 0){
+      fprintf(stdout,"loadmode(%s,%s) failed, ignoring section %s\n",Modefile,mode,sname);
+      free_demod(&demod);
+      continue;
+    }
     loadmode(demod,Configtable,sname,0); // Overwrite with config file entries
 
     demod->output.rtp.ssrc = (uint32_t)config_getdouble(Configtable,sname,"ssrc",0); // Default triggers auto gen from freq
