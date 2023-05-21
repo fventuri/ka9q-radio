@@ -886,7 +886,7 @@ static void rx888_set_samprate(struct sdrstate *sdr,double samprate,double refer
   /* choose an even integer for the output MS */
   uint32_t output_ms = ((uint32_t)(SI5351_MAX_VCO_FREQ / r_samprate));
   output_ms -= output_ms % 2;
-  if (output_ms < 4 || output_ms > 2048) {
+  if (output_ms < 4 || output_ms > 900) {
     fprintf(stdout,"ERROR - invalid output MS: %d  (samprate=%lg)\n",output_ms,samprate);
     return;
   }
@@ -949,7 +949,7 @@ static void rx888_set_samprate(struct sdrstate *sdr,double samprate,double refer
   uint8_t const clock_control = SI5351_VALUE_MS_INT | SI5351_VALUE_CLK_SRC_MS | SI5351_VALUE_CLK_DRV_8MA | SI5351_VALUE_MS_SRC_PLLA;
   control_send_byte(sdr->dev_handle,I2CWFX3,SI5351_ADDR,SI5351_REGISTER_CLK_BASE+0,clock_control);
 
-  usleep(1000);
+  usleep(1000000); // 1s - see SDDC_FX3 firmware
   sdr->samprate = samprate;
   sdr->reference = reference;
 }
