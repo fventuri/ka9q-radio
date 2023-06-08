@@ -143,7 +143,7 @@ int main(int argc,char *argv[]){
     }
     // Assume input and output sample rates are same
     for(int j=0;j<L;j++){
-      if(put_rfilter(filter_in,samp[j++] * scale) == 0)
+      if(put_rfilter(filter_in,samp[j++] * scale + carrier) == 0)
 	continue;
 
       // Form baseband signal (analytic for SSB, pure real for AM/DSB)
@@ -151,7 +151,7 @@ int main(int argc,char *argv[]){
       
       int16_t output[2*L];
       for(int i=0;i<L;i++){
-	complex float const c = carrier + step_osc(&osc) * amplitude * filter_out->output.c[i];
+	complex float const c = step_osc(&osc) * amplitude * filter_out->output.c[i];
 	output[2*i] = scaleclip(crealf(c));
 	output[2*i+1] = scaleclip(cimagf(c));
       }
