@@ -278,6 +278,8 @@ extern int Active_demod_count;
 extern int const Demod_alloc_quantum;
 extern pthread_mutex_t Demod_list_mutex;
 
+extern int Time_step_jump_threshold;
+
 extern int Status_fd;  // File descriptor for receiver status
 extern int Ctl_fd;     // File descriptor for receiving user commands
 

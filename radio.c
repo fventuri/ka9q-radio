@@ -41,6 +41,8 @@ struct demod *Demod_list; // Contiguous array
 int Demod_list_length; // Length of array
 int Active_demod_count; // Active demods
 
+int Time_step_jump_threshold; // Threshold above which we decide it is a jump
+
 
 static float const SCALE12 = 1/2048.;
 static float const SCALE16 = 1./INT16_MAX; // Scale signed 16-bit int to float in range -1, +1
@@ -223,7 +225,7 @@ void *proc_samples(void *arg){
       bad_rtp_count = 0;
     }
     int const time_step = rtp_process(&Frontend.input.rtp,&pkt.rtp,sampcount);
-    if(time_step < 0 || time_step > 192000){ // NOTE HARDWIRED SAMPRATE - fix this
+    if(time_step < 0 || time_step > Time_step_jump_threshold){
       // Old samples, or too big a jump; drop. Shouldn't happen if sequence number isn't old
       bad_rtp_count++;
       continue;

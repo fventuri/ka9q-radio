@@ -46,6 +46,7 @@ static int const DEFAULT_OVERLAP = 5;
 #if 0
 static int const DEFAULT_FFT_THREADS = 1;
 #endif
+static int const DEFAULT_TIME_STEP_JUMP_THRESHOLD = 192000;
 
 char const *Modefile = "modes.conf";
 
@@ -294,6 +295,7 @@ static int loadconfig(char const * const file){
   SAP_enable = config_getboolean(Configtable,global,"sap",0);
   Modefile = config_getstring(Configtable,global,"mode-file",Modefile);
   Wisdom_file = config_getstring(Configtable,global,"wisdom-file",Wisdom_file);
+  Time_step_jump_threshold = abs(config_getint(Configtable,global,"time-step-jump-threshold",DEFAULT_TIME_STEP_JUMP_THRESHOLD));
   char const * const input = config_getstring(Configtable,global,"input",NULL);
   if(input == NULL){
     // Mandatory
