@@ -714,6 +714,10 @@ static int ipv4_join_group(int const fd,void const * const sock,char const * con
     mreqn.imr_ifindex = 0;
   else
     mreqn.imr_ifindex = if_nametoindex(iface);
+  if(setsockopt(fd,IPPROTO_IP,IP_MULTICAST_IF,&mreqn,sizeof(mreqn)) != 0){
+    perror("multicast v4 set interface");
+    return -1;
+  }
   if(setsockopt(fd,IPPROTO_IP,IP_ADD_MEMBERSHIP,&mreqn,sizeof(mreqn)) != 0){
     perror("multicast v4 join");
     return -1;
