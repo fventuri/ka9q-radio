@@ -19,6 +19,8 @@
 #include "radio.h"
 #include "config.h"
 
+static float const power_smooth = 0.05;
+
 extern int Status_ttl;
 
 // Global variables set by config file options
@@ -1012,19 +1014,18 @@ static void rx_callback(int16_t *xi,int16_t *xq,sdrplay_api_StreamCbParamsT *par
   int const sampcount = numSamples;
   float complex * const wptr = frontend->in->input_write_pointer.c;
   assert(wptr != NULL);
-  float energy = 0;
+  float in_energy = 0;
   for(int i=0; i < sampcount; i++){
     float complex samp;
     __real__ samp = (int)xi[i];
     __imag__ samp = (int)xq[i];
     samp *= SCALE16;
-    energy += samp * samp;
+    in_energy += samp * samp;
     wptr[i] = samp;
   }
   frontend->samples += sampcount;
   write_cfilter(frontend->in,NULL,sampcount); // Update write pointer, invoke FFT
-  frontend->if_power = energy / sampcount;
-  frontend->if_energy += energy;
+  frontend->if_power += power_smooth * (in_energy / sampcount - frontend->if_power);
   return;
 }
 
