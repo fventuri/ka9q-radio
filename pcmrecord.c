@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <locale.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <poll.h>
 #include <sysexits.h>
