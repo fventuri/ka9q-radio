@@ -251,11 +251,10 @@ int sdrplay_setup(struct frontend * const frontend,dictionary * const Dictionary
     }
   }
   {
-    char const * const p = config_getstring(Dictionary,section,"description",NULL);
-    if(p != NULL){
-      strlcpy(frontend->description,p,sizeof(frontend->description));
-      fprintf(stdout,"%s: ",frontend->description);
-    }
+    char const * const p = config_getstring(Dictionary,section,"description","SDRplay RSP");
+    FREE(frontend->description);
+    frontend->description = strdup(p);
+    fprintf(stdout,"%s: ",frontend->description);
   }
 
   fprintf(stdout,"RF LNA state %d, IF att %d, IF AGC %d, IF AGC setPoint %d, DC offset corr %d, IQ imbalance corr %d\n",
