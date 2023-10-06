@@ -20,30 +20,13 @@ DAEMONS=aprs aprsfeed cwd opusd packetd radiod stereod rdsd
 
 EXECS=monitor opussend pcmsend pcmcat pcmrecord pcmspawn control metadump pl show-pkt show-sig tune wspr-decoded setfilt powers ft8-decoded wd-record
 
-AFILES=bandplan.txt help.txt id.txt monitor-help.txt SDDC_FX3.img presets.conf
-
-SYSTEMD_FILES=cwd.service packetd.service radiod@.service aprsfeed.service opusd@.service recordings@.service stereod.service rdsd.service wspr-decoded.service horusdemod.service ft8-decoded.service
-
-CONF_FILES=		 opusd@hf.conf opusd@hfdl.conf opusd@fm.conf opusd@aviation.conf opusd@packet.conf \
-			 opusd@kpbs.conf opusd@ksds.conf \
-			 opusd@cb-am.conf opusd@cb-lsb.conf opusd@cb-usb.conf \
-			 stereod.conf rdsd.conf \
-			 radiod@aviation.conf radiod@horus.conf radiod@nws.conf \
-			 radiod@repeater.conf \
-			 recordings@hf.conf recordings@fm.conf recordings@aviation.conf recordings@pictures.conf \
-			 wspr-decoded.conf horus.conf packetd.conf aprs.conf repeater.conf ft8-decoded.conf \
-			 radiod@siggen.conf \
-			 radiod@rx888-generic.conf radiod@rx888-ka9q-hf.conf radiod@kfs.conf
-
 
 LOGROTATE_FILES = aprsfeed.rotate
 
 
-SRC=aprs.c aprsfeed.c attr.c audio.c avahi.c ax25.c bandplan.c config.c control.c cwd.c decimate.c dump.c filter.c fm.c \
-	   tune.c iir.c linear.c main.c metadump.c misc.c modes.c monitor.c morse.c radio.c setfilt.c powers.c \
-	   show-sig.c spectrum.c radio_status.c multicast.c opusd.c pcmcat.c pcmsend.c osc.c packetd.c hid-libusb.c opussend.c show-pkt.c pcmrecord.c pl.c rdsd.c rtcp.c pcmspawn.c \
-	   rx888.c ezusb.c sig_gen.c status.c stereod.c wfm.c wspr-decoded.c ft8-decoded.c set_xcvr.c wd-record.c attr.h ax25.h bandplan.h conf.h config.h decimate.h \
-	   filter.h hidapi.h iir.h misc.h morse.h multicast.h osc.h radio.h status.h ezusb.h rx888.h
+CFILES = aprs.c aprsfeed.c attr.c audio.c avahi.c ax25.c bandplan.c config.c control.c cwd.c decimate.c dump.c ezusb.c filter.c fm.c ft8-decoded.c hid-libusb.c iir.c linear.c main.c metadump.c misc.c modes.c monitor.c morse.c multicast.c opusd.c opussend.c osc.c packetd.c pcmcat.c pcmrecord.c pcmsend.c pcmspawn.c pl.c powers.c radio.c radio_status.c rdsd.c rtcp.c rx888.c setfilt.c set_xcvr.c show-pkt.c show-sig.c sig_gen.c spectrum.c status.c stereod.c tune.c wd-record.c wfm.c wspr-decoded.c
+
+HFILES = attr.h ax25.h bandplan.h conf.h config.h decimate.h ezusb.h filter.h hidapi.h iir.h misc.h morse.h multicast.h osc.h radio.h rx888.h status.h
 
 all: depend $(DAEMONS) $(EXECS)
 
@@ -57,30 +40,25 @@ install: $(DAEMONS) $(EXECS) start-ka9q-horus.sh
 
 	install -o root -m 0755 -D --target-directory=$(DAEMONDIR) $(DAEMONS) start-ka9q-horus.sh
 #	rsync -a $(DAEMONS) start-ka9q-horus.sh $(DAEMONDIR)
-	
+
 	install -o root -m 0755 -D --target-directory=$(BINDIR) $(EXECS)
 #	rsync -a $(EXECS) $(BINDIR)
 #	setcap cap_sys_nice=ep $(BINDIR)/monitor
 
-	(cd aux; install -o root -m 0644 -D --target-directory=$(LIBDIR) $(AFILES))
-#	(cd aux;rsync -a $(AFILES) $(LIBDIR))
+	(cd share;install -o root -m 0644 -D --target-directory=$(LIBDIR) *)
+#	(cd share;rsync -a . $(LIBDIR))
+
+	(cd service;install -o root -m 0644 -D --target-directory=/etc/systemd/system *)
+#	(cd service;rsync -a . /etc/systemd/system)
 	
-	(cd service; install -o root -m 0644 -D --target-directory=/etc/systemd/system $(SYSTEMD_FILES))
-#	(cd service;rsync -a $(SYSTEMD_FILES) /etc/systemd/system)
-	
-#	install -o root -m 0644 -D --target-directory=/etc/udev/rules.d $(UDEV_FILES)
-#	(cd rules;rsync -a $(UDEV_FILES) /etc/udev/rules.d)
+#	(cd rules;install -o root -m 0644 -D --target-directory=/etc/udev/rules.d *)
+#	(cd rules;rsync -a . /etc/udev/rules.d)
 
-#	install -o root -m 0644 -D --target-directory=/etc/modprobe.d $(BLACKLIST)
-#	(cd config;rsync -a $(BLACKLIST) /etc/modprobe.d)
-
-#	install -o root -m 0644 -D --target-directory=/etc/logrotate.d $(LOGROTATE_FILES)
-#	(cd config;rsync -a $(LOGROTATE_FILES) /etc/logrotate.d)
-
-# Don't copy to avoid overwriting existing configs that might have been modified locally
-	(cd config; install -o root -m 0664 -D --target-directory=/etc/radio $(CONF_FILES))
-#	(cd config;rsync --ignore-existing -a $(CONF_FILES) /etc/radio)
-
+#	(cd aux;install -o root -m 0644 -D --target-directory=/etc/logrotate.d $(LOGROTATE_FILES))
+#	(cd aux;rsync -a $(LOGROTATE_FILES) /etc/logrotate.d)
+# Don't overwrite existing configs that might have been modified locally. Run this manually without the '--ignore-existing' if you want to overwrite them all
+	(cd config;install -o root -m 0664 -D --target-directory=/etc/radio *)
+#	(cd config;rsync --ignore-existing -a . /etc/radio)
 	mkdir -p /etc/fftw /etc/radio $(VARDIR)
 	chgrp radio $(VARDIR) /etc/radio /etc/fftw
 	chmod g+ws $(VARDIR) /etc/radio /etc/fftw
@@ -92,9 +70,9 @@ clean:
 
 depend: .depend
 
-.depend: $(SRC)
+.depend: $(CFILES) $(HFILES)
 	rm -f .depend
-	$(CC) $(CFLAGS) -MM $^ > .depend
+	$(CC) $(CFLAGS) -MM $(CFILES) > .depend
 
 -include .depend
 
@@ -184,6 +162,3 @@ wd-record: wd-record.o libradio.a
 libradio.a: avahi.o attr.o filter.o iir.o status.o misc.o multicast.o osc.o config.o
 	ar rv $@ $?
 	ranlib $@
-
-
-
