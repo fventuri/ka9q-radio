@@ -733,8 +733,8 @@ static double rx888_set_samprate(struct sdrstate *sdr,unsigned int reference,dou
   rational_approximation(feedback_ms,SI5351_MAX_DENOMINATOR,&a,&b,&c);
 
   double const actual_ratio = a + (double)b / (double)c;
-  double const actual_samprate = reference_corrected * actual_ratio / output_ms / pow(2.0,rdiv);
-  fprintf(stdout,"Samprate %'d, Reference %'d, Ppm %'g, A=%d B=%d C=%d output_ms=%d rdice=%d Actual Samprate %'lf\n",
+  double const actual_samprate = reference_corrected * actual_ratio / output_ms / (1 << rdiv);
+  fprintf(stdout,"Samprate %'d, Reference %'d, Ppm %'g, A=%d B=%d C=%d output_ms=%d rdiv=%d Actual Samprate %'lf\n",
 	  frontend->samprate,frontend->reference,frontend->ppm,a,b,c,output_ms,rdiv,actual_samprate);
 
   /* configure clock input and PLL */
