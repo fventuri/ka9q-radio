@@ -597,6 +597,7 @@ static int setup_hardware(char const *sname){
     Frontend.setup = rx888_setup;
     Frontend.start = rx888_startup;
     Frontend.tune = NULL; // Only direct sampling for now
+#if 0
   } else if(strcasecmp(device,"airspy") == 0){
     Frontend.setup = airspy_setup;
     Frontend.start = airspy_startup;
@@ -613,6 +614,7 @@ static int setup_hardware(char const *sname){
     Frontend.setup = rtlsdr_setup;
     Frontend.start = rtlsdr_startup;
     Frontend.tune = rtlsdr_tune;
+#endif
   } else if(strcasecmp(device,"sig_gen") == 0){
     Frontend.setup = sig_gen_setup;
     Frontend.start = sig_gen_startup;
