@@ -80,6 +80,7 @@ struct sdrstate {
   bool randomizer;
   bool dither;
   bool highgain;
+  uint32_t gpios;
 
   pthread_t cmd_thread;
   pthread_t proc_thread;  
@@ -91,6 +92,7 @@ static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,bool dither,boo
 static void rx888_set_att(struct sdrstate *sdr,float att,bool vhf);
 static void rx888_set_gain(struct sdrstate *sdr,float gain,bool vhf);
 static double rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate);
+static void rx888_set_hf_mode(struct sdrstate *sdr);
 static double rx888_set_tuner_frequency(struct sdrstate *sdr,double frequency);
 static int rx888_start_rx(struct sdrstate *sdr,libusb_transfer_cb_fn callback);
 static void rx888_stop_rx(struct sdrstate *sdr);
@@ -156,6 +158,8 @@ int rx888_setup(struct frontend * const frontend,dictionary const * const dictio
       return -1;
     }
   }
+  // GPIOs
+  sdr->gpios = 0;
   // Enable/disable dithering
   sdr->dither = config_getboolean(dictionary,section,"dither",false);
   // Enable/output output randomization
@@ -245,7 +249,10 @@ int rx888_setup(struct frontend * const frontend,dictionary const * const dictio
     fprintf(stdout,"Invalid VHF/UHF frequency %'lf, forcing %'lf\n",frequency,0.0);
     frequency = 0;
   }
-  if(frequency > 0){
+  if(frequency == 0){
+    // HF mode
+    rx888_set_hf_mode(sdr);
+  } else {
     // VHF/UHF mode
     double actual_frequency = rx888_set_tuner_frequency(sdr,frequency);
     fprintf(stdout,"Actual VHF/UHF tuner frequency %'lf\n",actual_frequency);
@@ -635,15 +642,14 @@ end:;
 
 static void rx888_set_dither_and_randomizer(struct sdrstate *sdr,bool dither,bool randomizer){
   assert(sdr != NULL);
-  uint32_t gpio = 0;
   if(dither)
-    gpio |= DITH;
+    sdr->gpios |= DITH;
 
   if(randomizer)
-    gpio |= RANDO;
+    sdr->gpios |= RANDO;
 
   usleep(5000);
-  command_send(sdr->dev_handle,GPIOFX3,gpio);
+  command_send(sdr->dev_handle,GPIOFX3,sdr->gpios);
   sdr->dither = dither;
   sdr->randomizer = randomizer;
 }
@@ -780,17 +786,24 @@ static double rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate){
   return actual_samprate;
 }
 
+static void rx888_set_hf_mode(struct sdrstate *sdr){
+  command_send(sdr->dev_handle,TUNERSTDBY,0); // Stop Tuner
+  // switch to HF Antenna
+  usleep(5000);
+  sdr->gpios &= ~VHF_EN;
+  command_send(sdr->dev_handle,GPIOFX3,sdr->gpios);
+}
+
 static double rx888_set_tuner_frequency(struct sdrstate *sdr,double frequency){
   assert(sdr != NULL);
-  if(frequency == 0){
-    return frequency;
-  }
+  // frequency == 0 -> HF mode; we shouldn't be here
+  assert(frequency > 0);
   // disable HF by set max ATT
   rx888_set_att(sdr,31.5,false);  // max att 31.5 dB
   // switch to VHF Antenna
-  uint32_t gpio = VHF_EN;
   usleep(5000);
-  command_send(sdr->dev_handle,GPIOFX3,gpio);
+  sdr->gpios |= VHF_EN;
+  command_send(sdr->dev_handle,GPIOFX3,sdr->gpios);
 
   // high gain, 0db
   uint8_t gain = 0x80 | 3;
@@ -926,9 +939,15 @@ static int gain2val(bool highgain, double gain){
   return g;
 }
 double rx888_tune(struct frontend *frontend,double freq){
+  struct sdrstate *sdr = frontend->context;
   if(frontend->lock)
     return frontend->frequency;
-  return 0; // No tuning implemented (direct sampling only)
+  if(freq == 0.0){
+    rx888_set_hf_mode(sdr);
+    return 0;
+  } else {
+    return rx888_set_tuner_frequency(sdr,freq);
+  }
 }
 
 /* best rational approximation:
