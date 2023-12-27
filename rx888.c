@@ -787,34 +787,47 @@ static double rx888_set_samprate(struct sdrstate *sdr,unsigned int samprate){
 }
 
 static void rx888_set_hf_mode(struct sdrstate *sdr){
+  struct frontend *frontend = sdr->frontend;
+  if(frontend->frequency == 0.0){
+    return;
+  }
   command_send(sdr->dev_handle,TUNERSTDBY,0); // Stop Tuner
   // switch to HF Antenna
   usleep(5000);
   sdr->gpios &= ~VHF_EN;
   command_send(sdr->dev_handle,GPIOFX3,sdr->gpios);
+  frontend->frequency = 0.0;
 }
 
 static double rx888_set_tuner_frequency(struct sdrstate *sdr,double frequency){
   assert(sdr != NULL);
   // frequency == 0 -> HF mode; we shouldn't be here
   assert(frequency > 0);
-  // disable HF by set max ATT
-  rx888_set_att(sdr,31.5,false);  // max att 31.5 dB
-  // switch to VHF Antenna
-  usleep(5000);
-  sdr->gpios |= VHF_EN;
-  command_send(sdr->dev_handle,GPIOFX3,sdr->gpios);
+  struct frontend *frontend = sdr->frontend;
+  if(frontend->frequency == frequency){
+    return frequency - R828D_IF_CARRIER;
+  }
+  if(frontend->frequency == 0.0){
+    // disable HF by set max ATT
+    rx888_set_att(sdr,31.5,false);  // max att 31.5 dB
+    // switch to VHF Antenna
+    usleep(5000);
+    sdr->gpios |= VHF_EN;
+    command_send(sdr->dev_handle,GPIOFX3,sdr->gpios);
 
-  // high gain, 0db
-  uint8_t gain = 0x80 | 3;
-  argument_send(sdr->dev_handle,AD8340_VGA,gain);
+    // high gain, 0db
+    uint8_t gain = 0x80 | 3;
+    argument_send(sdr->dev_handle,AD8340_VGA,gain);
 
-  // Enable Tuner reference clock
-  uint32_t ref = R828D_FREQ;
-  command_send(sdr->dev_handle,TUNERINIT,ref); // Initialize Tuner
+    // Enable Tuner reference clock
+    uint32_t ref = R828D_FREQ;
+    command_send(sdr->dev_handle,TUNERINIT,ref); // Initialize Tuner
+  }
 
   // Tune LO
   command_send(sdr->dev_handle,TUNERTUNE,(uint64_t)frequency);
+  frontend->frequency = frequency;
+  fprintf(stderr, "VHF/UHF tuner requested frequency: %'lf - actual frequency: %'lf", frequency, frequency - R828D_IF_CARRIER);
   return frequency - R828D_IF_CARRIER;
 }
 
