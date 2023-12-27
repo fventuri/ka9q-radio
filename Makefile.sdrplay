@@ -15,7 +15,7 @@ LDLIBS=-lpthread -lbsd -lm
 
 DAEMONS=aprs aprsfeed cwd opusd packetd radiod stereod rdsd
 
-EXECS=control jt-decoded metadump monitor opussend pcmcat pcmrecord pcmsend pcmspawn pl powers setfilt show-pkt show-sig tune wd-record
+EXECS=control jt-decoded metadump monitor opussend pcmcat pcmrecord pcmsend pcmspawn pl powers setfilt show-pkt show-sig tune wd-record ka9q-web
 
 
 LOGROTATE_FILES = aprsfeed.rotate
@@ -148,6 +148,9 @@ jt-decoded: jt-decoded.o libradio.a
 
 wd-record: wd-record.o libradio.a
 	$(CC) $(LDOPTS) -o $@ $^ -lbsd -lm -lpthread
+
+ka9q-web: web.o multicast.o status.o misc.o
+	$(CC) $(LDOPTS) -o $@ $^ -lfftw3f_threads -lfftw3f -lncursesw -liniparser -lbsd -lm -lpthread -lonion
 
 
 # subroutines useful in more than one program
