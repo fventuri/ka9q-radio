@@ -197,6 +197,7 @@ int sdrplay_setup(struct frontend * const frontend,dictionary * const Dictionary
   }
   frontend->samprate = get_samplerate(sdr);
   frontend->isreal = false;
+  frontend->bitspersample = 1; // Already floating point
   frontend->calibrate = config_getdouble(Dictionary,section,"calibrate",0);
   frontend->min_IF = -0.47 * frontend->samprate;
   frontend->max_IF = +0.47 * frontend->samprate;
@@ -1105,16 +1106,16 @@ static void rx_callback(int16_t *xi,int16_t *xq,sdrplay_api_StreamCbParamsT *par
     __real__ samp = (int)xi[i];
     __imag__ samp = (int)xq[i];
     samp *= SCALE16;
-    in_energy += samp * samp;
+    in_energy += cnrmf(samp);
     wptr[i] = samp;
   }
-  if(!isfinite(in_energy))
-    in_energy = 0;  // Don't let an infinite or NAN sample pollute the power integrator
   frontend->samples += sampcount;
   frontend->timestamp = gps_time_ns();
   write_cfilter(&frontend->in,NULL,sampcount); // Update write pointer, invoke FFT
-  frontend->if_power_instant = in_energy / sampcount;
-  frontend->if_power += Power_smooth * (frontend->if_power_instant - frontend->if_power);
+  if(isfinite(in_energy)){
+    frontend->if_power_instant = in_energy / sampcount;
+    frontend->if_power += Power_smooth * (frontend->if_power_instant - frontend->if_power);
+  }
   return;
 }
 
