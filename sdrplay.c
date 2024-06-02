@@ -197,7 +197,7 @@ int sdrplay_setup(struct frontend * const frontend,dictionary * const Dictionary
   }
   frontend->samprate = get_samplerate(sdr);
   frontend->isreal = false;
-  frontend->bitspersample = 1; // Already floating point
+  frontend->bitspersample = 16;
   frontend->calibrate = config_getdouble(Dictionary,section,"calibrate",0);
   frontend->min_IF = -0.47 * frontend->samprate;
   frontend->max_IF = +0.47 * frontend->samprate;
@@ -1105,7 +1105,6 @@ static void rx_callback(int16_t *xi,int16_t *xq,sdrplay_api_StreamCbParamsT *par
     float complex samp;
     __real__ samp = (int)xi[i];
     __imag__ samp = (int)xq[i];
-    samp *= SCALE16;
     in_energy += cnrmf(samp);
     wptr[i] = samp;
   }
