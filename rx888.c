@@ -258,9 +258,11 @@ int rx888_setup(struct frontend * const frontend,dictionary const * const dictio
     if(p != NULL)
       frequency = parse_frequency(p,false);
   }
-  if(frequency < Min_frequency || frequency > Max_frequency){
-    fprintf(stdout,"Invalid VHF/UHF frequency %'lf, forcing %'lf\n",frequency,0.0);
-    frequency = 0;
+  if(frequency != 0){
+    if(frequency < Min_frequency || frequency > Max_frequency){
+      fprintf(stdout,"Invalid VHF/UHF frequency %'lf, forcing %'lf (HF mode)\n",frequency,0.0);
+      frequency = 0;
+    }
   }
   if(frequency == 0){
     // HF mode
